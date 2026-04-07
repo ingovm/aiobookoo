@@ -5,7 +5,7 @@ import logging
 from bleak import BleakClient, BleakScanner, BLEDevice
 from bleak.exc import BleakDeviceNotFoundError, BleakError
 
-from .const import CHARACTERISTIC_UUID_WEIGHT, SCALE_START_NAMES
+from .const import CHARACTERISTIC_UUID_EXTRACTION, CHARACTERISTIC_UUID_WEIGHT, SCALE_START_NAMES
 from .exceptions import BookooDeviceNotFound, BookooError, BookooUnknownDevice
 
 _LOGGER = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ async def scan(scanner: BleakScanner, timeout) -> list:
 
 
 async def is_bookoo_scale(address_or_ble_device: str | BLEDevice) -> bool:
-    """Check if the scale is a new style scale."""
+    """Check if the device is a Bookoo scale."""
 
     try:
         async with BleakClient(address_or_ble_device) as client:
@@ -50,6 +50,25 @@ async def is_bookoo_scale(address_or_ble_device: str | BLEDevice) -> bool:
         raise BookooError(ex) from ex
 
     if CHARACTERISTIC_UUID_WEIGHT in characteristics:
+        return True
+
+    raise BookooUnknownDevice
+
+
+async def is_bookoo_monitor(address_or_ble_device: str | BLEDevice) -> bool:
+    """Check if the device is a Bookoo Espresso Monitor."""
+
+    try:
+        async with BleakClient(address_or_ble_device) as client:
+            characteristics = [
+                char.uuid for char in client.services.characteristics.values()
+            ]
+    except BleakDeviceNotFoundError as ex:
+        raise BookooDeviceNotFound("Device not found") from ex
+    except (BleakError, Exception) as ex:
+        raise BookooError(ex) from ex
+
+    if CHARACTERISTIC_UUID_EXTRACTION in characteristics:
         return True
 
     raise BookooUnknownDevice

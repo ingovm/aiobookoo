@@ -344,16 +344,18 @@ class BookooScale:
             _LOGGER.warning("%s: %s", ex.message, ex.bytes_recvd)
             return
 
-        if isinstance(msg, BookooMessage):
-            self._weight = msg.weight
-            self._timer = msg.timer
-            self._flow_rate = msg.flow_rate
-            self._device_state = BookooDeviceState(
-                battery_level=msg.battery,
-                units=UnitMass("grams"),
-                buzzer_gear=msg.buzzer_gear,
-                auto_off_time=msg.standby_time,
-            )
+        if not isinstance(msg, BookooMessage):
+            return
+
+        self._weight = msg.weight
+        self._timer = msg.timer
+        self._flow_rate = msg.flow_rate
+        self._device_state = BookooDeviceState(
+            battery_level=msg.battery,
+            units=UnitMass("grams"),
+            buzzer_gear=msg.buzzer_gear,
+            auto_off_time=msg.standby_time,
+        )
 
         if self._notify_callback is not None:
             self._notify_callback()

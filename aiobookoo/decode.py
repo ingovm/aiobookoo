@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 import logging
 
-from .const import WEIGHT_BYTE1, WEIGHT_BYTE2
+from .const import MONITOR_BYTE1, MONITOR_BYTE2, WEIGHT_BYTE1, WEIGHT_BYTE2
 from .exceptions import BookooMessageError, BookooMessageTooLong, BookooMessageTooShort
 
 _LOGGER = logging.getLogger(__name__)
@@ -80,4 +80,55 @@ def decode(byte_msg: bytearray):
         return (BookooMessage(byte_msg), bytearray())
 
     _LOGGER.debug("Full message: %s", byte_msg)
+    return (None, byte_msg)
+
+
+@dataclass
+class BookooMonitorMessage:
+    """Representation of a data packet from the Extraction Data Characteristic of a Bookoo Espresso Monitor.
+
+    Packet layout (10 bytes), decoded as described in
+    https://github.com/BooKooCode/OpenSource/blob/main/espresso_monitor/protocols.md
+
+    BYTE1-2 : header (02 1B)
+    BYTE3-4 : reserved (00 00)
+    BYTE5-6 : pressure * 100 bar, big-endian unsigned short
+    BYTE7   : battery remaining (%)
+    BYTE8-9 : reserved (00 00)
+    BYTE10  : XOR checksum
+    """
+
+    def __init__(self, payload: bytearray) -> None:
+        """Initialize a BookooMonitorMessage from a raw 10-byte payload."""
+
+        self.pressure: float = (
+            int.from_bytes(payload[4:6], byteorder="big") / 100.0
+        )  # Convert to bar
+        self.battery: int = payload[6]  # battery level in percent
+
+        # Verify checksum
+        checksum = 0
+        for byte in payload[:-1]:
+            checksum ^= byte
+        if checksum != payload[-1]:
+            raise BookooMessageError(payload, "Checksum mismatch")
+
+
+def decode_monitor(byte_msg: bytearray):
+    """Return a tuple - first element is the monitor message, or None.
+
+    The second element is the remaining bytes of the message.
+
+    """
+
+    if len(byte_msg) < 10:
+        raise BookooMessageTooShort(byte_msg)
+
+    if len(byte_msg) > 10:
+        raise BookooMessageTooLong(byte_msg)
+
+    if byte_msg[0] == MONITOR_BYTE1 and byte_msg[1] == MONITOR_BYTE2:
+        return (BookooMonitorMessage(byte_msg), bytearray())
+
+    _LOGGER.debug("Full monitor message: %s", byte_msg)
     return (None, byte_msg)
