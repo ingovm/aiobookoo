@@ -209,13 +209,21 @@ class BookooScale:
             )
             return
 
-        self._client = BleakClient(
-            address_or_ble_device=self.address_or_ble_device,
-            disconnected_callback=self.device_disconnected_handler,
-        )
-
         try:
-            await self._client.connect()
+            if isinstance(self.address_or_ble_device, BLEDevice):
+                from bleak_retry_connector import establish_connection, BleakClientWithServiceCache
+                self._client = await establish_connection(
+                    client_class=BleakClientWithServiceCache,
+                    device=self.address_or_ble_device,
+                    name=self.name or self.mac,
+                    disconnected_callback=self.device_disconnected_handler,
+                )
+            else:
+                self._client = BleakClient(
+                    address_or_ble_device=self.address_or_ble_device,
+                    disconnected_callback=self.device_disconnected_handler,
+                )
+                await self._client.connect()
         except BleakError as ex:
             msg = "Error during connecting to device"
             _LOGGER.debug("%s: %s", msg, ex)
