@@ -1,6 +1,6 @@
 [project]
 name = "aiobookoo"
-version = "0.2.0"
+version = "0.2.1"
 license = { text = "MIT" }
 description = "A bookoo port of aioacaia"
 readme = "README.md"

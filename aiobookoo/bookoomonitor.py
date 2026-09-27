@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 
@@ -25,6 +26,11 @@ from .exceptions import (
 from .decode import BookooMonitorMessage, decode_monitor
 
 _LOGGER = logging.getLogger(__name__)
+
+# The monitor streams ~10 readings/s, mostly idle noise. Only notify listeners
+# when pressure moved noticeably and not more often than this.
+PRESSURE_NOTIFY_MIN_DELTA = 0.05  # bar
+PRESSURE_NOTIFY_MIN_INTERVAL = 0.5  # seconds
 
 
 class BookooEspressoMonitor:
@@ -63,10 +69,15 @@ class BookooEspressoMonitor:
 
         self._pressure: float | None = None
         self._battery: int | None = None
+        self._notified_pressure: float | None = None
+        self._notified_battery: int | None = None
+        self._last_notify_time = 0.0
 
         # queue
         self._queue: asyncio.Queue = asyncio.Queue()
         self._add_to_queue_lock = asyncio.Lock()
+        # Serializes start/stop so a stop issued while connecting is not dropped.
+        self._extraction_lock = asyncio.Lock()
 
         self._notify_callback: Callable[[], None] | None = notify_callback
 
@@ -246,26 +257,37 @@ class BookooEspressoMonitor:
 
     async def start_extraction(self) -> None:
         """Send start extraction command."""
-        if not self.connected:
-            await self.connect()
+        async with self._extraction_lock:
+            if not self.connected:
+                await self.connect()
 
-        _LOGGER.debug('Sending "start extraction" message')
+            _LOGGER.debug('Sending "start extraction" message')
 
-        async with self._add_to_queue_lock:
-            await self._queue.put(
-                (self._command_char_id, self._msg_types["startExtraction"])
-            )
+            async with self._add_to_queue_lock:
+                await self._queue.put(
+                    (self._command_char_id, self._msg_types["startExtraction"])
+                )
 
     async def stop_extraction(self) -> None:
-        """Send stop extraction command and disconnect to preserve battery."""
-        if not self.connected:
-            return
+        """Send stop extraction command and disconnect to preserve battery.
 
-        _LOGGER.debug('Sending "stop extraction" message')
+        If a start is still connecting, this waits for it to finish first.
+        """
+        async with self._extraction_lock:
+            if not self.connected:
+                return
 
-        # Send the command directly rather than via queue so we can disconnect immediately after.
-        await self._write_msg(self._command_char_id, self._msg_types["stopExtraction"])
-        await self.disconnect()
+            # Flush a still-queued start command so it can't arrive after the stop.
+            # Bounded, so a dead queue task can't block stop forever.
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(2):
+                    await self._queue.join()
+
+            _LOGGER.debug('Sending "stop extraction" message')
+
+            # Send the command directly rather than via queue so we can disconnect immediately after.
+            await self._write_msg(self._command_char_id, self._msg_types["stopExtraction"])
+            await self.disconnect()
 
     async def on_bluetooth_data_received(
         self,
@@ -292,5 +314,16 @@ class BookooEspressoMonitor:
         self._pressure = msg.pressure
         self._battery = msg.battery
 
-        if self._notify_callback is not None:
+        if self._notify_callback is not None and self._should_notify():
+            self._notified_pressure = self._pressure
+            self._notified_battery = self._battery
+            self._last_notify_time = time.monotonic()
             self._notify_callback()
+
+    def _should_notify(self) -> bool:
+        """Return True if the new reading is worth pushing to listeners."""
+        if self._notified_pressure is None or self._battery != self._notified_battery:
+            return True
+        if time.monotonic() - self._last_notify_time < PRESSURE_NOTIFY_MIN_INTERVAL:
+            return False
+        return abs(self._pressure - self._notified_pressure) >= PRESSURE_NOTIFY_MIN_DELTA
