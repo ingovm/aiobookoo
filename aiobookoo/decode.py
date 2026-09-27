@@ -36,7 +36,7 @@ class BookooMessage:
         self.flowSymbol = -1 if payload[10] == 45 else 1 if payload[10] == 43 else 0
         self.flow_rate = (
             int.from_bytes(payload[11:13], byteorder="big") / 100.0 * self.flowSymbol
-        )  # Convert to ml
+        )  # g/s (flow rate is a 2-byte big-endian short, like weight)
         self.battery = payload[13]  # battery level in percent
         self.standby_time = int.from_bytes(payload[14:16], byteorder="big")  # minutes
         self.buzzer_gear = payload[16]
